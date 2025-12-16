@@ -1,10 +1,7 @@
-// Shader-ul de fragment / Fragment shader 
 #version 330 core
-
-in vec4 ex_Color;
-out vec4 out_Color;
-
-void main(void)
-  {
-    out_Color = ex_Color;
-  }
+in vec4 color;
+out vec4 FragColor;
+void main()
+{
+    FragColor = color;
+}
