@@ -19,8 +19,15 @@ GLuint bgVao, bgVbo;
 GLuint bgTexture;
 GLuint bgProgramId;
 GLuint NormalBufferId;
+GLuint codColLocation;
+GLuint TexCoordBufferId;
+GLuint platformTexture;
+GLuint platformProgram;
 
-glm::vec3 lightPos(8.0f, 6.0f, 8.0f);
+
+// matrice umbra
+glm::mat4 shadowMatrix;
+glm::vec3 lightPos(-25.0f, 70.0f, 5.0f);
 
 // ================= BACKGROUND QUAD =================
 float bgVertices[] = {
@@ -37,8 +44,8 @@ float bgVertices[] = {
 float camYaw = glm::radians(120.0f);   // stanga-dreapta
 float camPitch = glm::radians(35.0f); // sus-jos
 float camDist = 12.0f;
-// ================= PLATFORM LAYOUT =================
 
+// ================= PLATFORM LAYOUT =================
 const int ROWS = 6;
 const int COLS = 10;
 const float PLATFORM_HEIGHT = 0.2f;
@@ -97,6 +104,41 @@ float Obsx, Obsy, Obsz;
 float Vx = 0, Vy = 0, Vz = 1;
 
 glm::mat4 view, projection, myMatrix;
+
+
+// construire matrice umbra
+glm::mat4 BuildShadowMatrix(glm::vec4 plane, glm::vec4 light)
+{
+    float dot = plane.x * light.x +
+        plane.y * light.y +
+        plane.z * light.z +
+        plane.w * light.w;
+
+    glm::mat4 m(0.0f);
+
+    m[0][0] = dot - light.x * plane.x;
+    m[1][0] = 0.0f - light.x * plane.y;
+    m[2][0] = 0.0f - light.x * plane.z;
+    m[3][0] = 0.0f - light.x * plane.w;
+
+    m[0][1] = 0.0f - light.y * plane.x;
+    m[1][1] = dot - light.y * plane.y;
+    m[2][1] = 0.0f - light.y * plane.z;
+    m[3][1] = 0.0f - light.y * plane.w;
+
+    m[0][2] = 0.0f - light.z * plane.x;
+    m[1][2] = 0.0f - light.z * plane.y;
+    m[2][2] = dot - light.z * plane.z;
+    m[3][2] = 0.0f - light.z * plane.w;
+
+    m[0][3] = 0.0f - light.w * plane.x;
+    m[1][3] = 0.0f - light.w * plane.y;
+    m[2][3] = 0.0f - light.w * plane.z;
+    m[3][3] = dot - light.w * plane.w;
+
+    return m;
+}
+
 
 bool isInside(int i, int j) {
     return i >= 0 && i < ROWS && j >= 0 && j < COLS;
@@ -326,7 +368,7 @@ void animationTimer(int value) {
     }
 
     glutPostRedisplay();
-    glutTimerFunc(16, animationTimer, 0);
+    glutTimerFunc(10, animationTimer, 0);
 }
 
 void processNormalKeys(unsigned char key, int x, int y)
@@ -460,6 +502,21 @@ GLfloat cubeNormals[] =
    -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0
 };
 
+GLfloat cubeTexCoords[] =
+{
+    // TOP
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0,
+    // BOTTOM
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0,
+    // FRONT
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0,
+    // BACK
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0,
+    // RIGHT
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0,
+    // LEFT
+    0,0, 1,0, 1,1,  1,1, 0,1, 0,0
+};
 
 GLfloat cubeColors[36 * 4];
 
@@ -510,6 +567,18 @@ void CreateVBO(void)
 
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+    // ===== TEXCOORDS =====
+    glGenBuffers(1, &TexCoordBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, TexCoordBufferId);
+    glBufferData(GL_ARRAY_BUFFER,
+        sizeof(cubeTexCoords),
+        cubeTexCoords,
+        GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, 0, 0);
+
 }
 
 void DestroyVBO(void)
@@ -533,13 +602,22 @@ void Initialize(void)
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     CreateVBO();
     CreateShaders();
+    codColLocation = glGetUniformLocation(ProgramId, "codCol");
+
     bgProgramId = LoadShaders("bg.vert", "bg.frag");
     CreateBackgroundQuad();
     bgTexture = loadTexture("textures/bg.jpg");
     glUseProgram(bgProgramId);
     glUniform1i(glGetUniformLocation(bgProgramId, "bgTexture"), 0);
 
+    platformProgram = LoadShaders("platform.vert", "platform.frag");
+    platformTexture = loadTexture("textures/platform.png");
+    glUseProgram(platformProgram);
+    glUniform1i(glGetUniformLocation(platformProgram, "platformTexture"), 0);
 
+
+    glUseProgram(ProgramId);
+    glUniform1i(glGetUniformLocation(ProgramId, "texture1"), 0);
 }
 
 // ================= RENDER =================
@@ -548,6 +626,9 @@ void RenderFunction(void)
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // =====================================================
+    // 1. BACKGROUND
+    // =====================================================
     glDisable(GL_DEPTH_TEST);
     glUseProgram(bgProgramId);
 
@@ -558,39 +639,87 @@ void RenderFunction(void)
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glEnable(GL_DEPTH_TEST);
-    glUseProgram(ProgramId);
 
-    glBindVertexArray(VaoId);
 
-    // ===== CAMERA =====
 
+    // =====================================================
+    // 2. CAMERA (o calculăm O SINGURĂ DATĂ)
+    // =====================================================
     float cx = camDist * cos(camPitch) * cos(camYaw);
     float cy = camDist * sin(camPitch);
     float cz = camDist * cos(camPitch) * sin(camYaw);
 
+    glm::vec3 cameraPos(cx, cy, cz);
+
     view = glm::lookAt(
-        glm::vec3(cx, cy, cz),
-        glm::vec3(-2.0f, 2.0f, 0.0f), // centrul platformei
+        cameraPos,
+        glm::vec3(-2.0f, 2.0f, 0.0f),   // centrul platformei
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
-    glUseProgram(ProgramId);
-
-    glUniform3fv(glGetUniformLocation(ProgramId, "lightPos"), 1,
-        glm::value_ptr(lightPos));
-
-    glUniform3fv(glGetUniformLocation(ProgramId, "viewPos"), 1,
-        glm::value_ptr(glm::vec3(Obsx, Obsy, Obsz)));
-
-    glUniform3f(glGetUniformLocation(ProgramId, "lightColor"),
-        1.0f, 1.0f, 1.0f);
-
-
 
     projection = glm::infinitePerspective(
         glm::radians(45.0f),
         800.0f / 600.0f,
         0.1f
     );
+
+
+
+    // =====================================================
+    // 3. PLATFORMA (SHADER SEPARAT)
+    // =====================================================
+    glUseProgram(platformProgram);
+    glBindVertexArray(VaoId);
+
+    GLint modelLocP = glGetUniformLocation(platformProgram, "model");
+    GLint viewLocP = glGetUniformLocation(platformProgram, "view");
+    GLint projLocP = glGetUniformLocation(platformProgram, "projection");
+
+    glUniformMatrix4fv(viewLocP, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(projLocP, 1, GL_FALSE, glm::value_ptr(projection));
+
+    glUniform3fv(
+        glGetUniformLocation(platformProgram, "lightPos"),
+        1, glm::value_ptr(lightPos)
+    );
+
+    glUniform3fv(
+        glGetUniformLocation(platformProgram, "viewPos"),
+        1, glm::value_ptr(cameraPos)
+    );
+
+    glUniform3f(
+        glGetUniformLocation(platformProgram, "lightColor"),
+        1.0f, 1.0f, 1.0f
+    );
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, platformTexture);
+
+    for (int i = 0; i < ROWS; i++)
+        for (int j = 0; j < COLS; j++)
+            if (platform[i][j])
+            {
+                glm::mat4 model =
+                    glm::translate(glm::mat4(1.0f),
+                        glm::vec3(j - 5.0f, 0.1f, i - 5.0f)) *
+                    glm::scale(glm::mat4(1.0f),
+                        glm::vec3(1.0f, 0.2f, 1.0f));
+
+                glUniformMatrix4fv(
+                    modelLocP, 1, GL_FALSE, glm::value_ptr(model)
+                );
+
+                glDrawArrays(GL_TRIANGLES, 0, 36);
+            }
+
+
+
+    // =====================================================
+    // 4. BLOC + UMBRĂ (SHADER VECHI)
+    // =====================================================
+    glUseProgram(ProgramId);
+    glBindVertexArray(VaoId);
 
     GLint modelLoc = glGetUniformLocation(ProgramId, "model");
     GLint viewLoc = glGetUniformLocation(ProgramId, "view");
@@ -599,95 +728,75 @@ void RenderFunction(void)
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-    // ===== PLATFORMA =====
-    for (int i = 0; i < 36; i++) {
-        cubeColors[i * 4 + 0] = 0.4f;
-        cubeColors[i * 4 + 1] = 0.25f;
-        cubeColors[i * 4 + 2] = 0.1f;
-        cubeColors[i * 4 + 3] = 1.0f;
-    }
+    glUniform3fv(
+        glGetUniformLocation(ProgramId, "lightPos"),
+        1, glm::value_ptr(lightPos)
+    );
 
-    glBindBuffer(GL_ARRAY_BUFFER, ColorBufferId);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(cubeColors), cubeColors);
+    glUniform3fv(
+        glGetUniformLocation(ProgramId, "viewPos"),
+        1, glm::value_ptr(cameraPos)
+    );
 
-    for (int i = 0; i < ROWS; i++)
-        for (int j = 0; j < COLS; j++)
-            if (platform[i][j]) {
-                float x = j - 5.0f;
-                float z = i - 5.0f;
-
-                glm::mat4 model =
-                    glm::translate(glm::mat4(1.0f),
-                        glm::vec3(x, 0.1f, z)) *
-                    glm::scale(glm::mat4(1.0f),
-                        glm::vec3(1.0f, 0.2f, 1.0f));
+    glUniform3f(
+        glGetUniformLocation(ProgramId, "lightColor"),
+        1.0f, 1.0f, 1.0f
+    );
 
 
-                glUniformMatrix4fv(modelLoc, 1, GL_FALSE,
-                    glm::value_ptr(model));
-                glDrawArrays(GL_TRIANGLES, 0, 36);
-            }
 
-    // ===== BLOC =====
-    for (int i = 0; i < 36; i++) {
-        cubeColors[i * 4 + 0] = 0.2f;
-        cubeColors[i * 4 + 1] = 0.4f;
-        cubeColors[i * 4 + 2] = 0.9f;
-        cubeColors[i * 4 + 3] = 1.0f;
-    }
+    // ===== calcul matrice umbră =====
+    glm::vec4 plane(0.0f, 1.0f, 0.0f, -PLATFORM_HEIGHT);
+    glm::vec4 light(lightPos, 1.0f);
+    shadowMatrix = BuildShadowMatrix(plane, light);
 
-    glBindBuffer(GL_ARRAY_BUFFER, ColorBufferId);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(cubeColors), cubeColors);
 
-    // stare de randare
+
+    // ===== poziție bloc =====
     BlockState stateToDraw = isAnimating ? renderState : blockState;
 
-    // ===== pozizie Y =====
     float blockY =
         (stateToDraw == STANDING)
         ? PLATFORM_HEIGHT + BLOCK_HALF_STANDING
         : PLATFORM_HEIGHT + BLOCK_HALF_LYING;
 
-    // pozitie de baza
     glm::vec3 pos(blockJ - 5.0f, blockY, blockI - 5.0f);
 
     if (stateToDraw == LYING_X) pos.x += 0.5f;
     if (stateToDraw == LYING_Z) pos.z += 0.5f;
 
-    // ===== scale =====
     glm::vec3 scale(1.0f);
-
     if (stateToDraw == STANDING)
         scale = glm::vec3(1.0f, 2.0f, 1.0f);
     else if (stateToDraw == LYING_X)
         scale = glm::vec3(2.0f, 1.0f, 1.0f);
-    else if (stateToDraw == LYING_Z)
+    else
         scale = glm::vec3(1.0f, 1.0f, 2.0f);
 
-    // ===== model matrix =====
     glm::mat4 blockModel = glm::translate(glm::mat4(1.0f), pos);
 
-    // ===== rotatie cu pivot =====
+
+
+    // ===== animație =====
     if (isAnimating)
     {
-        glm::vec3 pivot(0.0f);
-
-        // pivot pe muchia care atinge platforma
         float pivotY =
             (renderState == STANDING)
             ? -BLOCK_HALF_STANDING
             : -BLOCK_HALF_LYING;
 
-        float edgeOffset = 0.5f;
+        float edgeOffset = (renderState != STANDING && targetState == STANDING)
+            ? 1.0f : 0.5f;
 
-        if (renderState != STANDING && targetState == STANDING)
-            edgeOffset = 1.0f;
+        glm::vec3 pivot;
 
-        if (animAxis.x != 0)   // W / S
-            pivot = glm::vec3(0.0f, pivotY, animAxis.x > 0 ? edgeOffset : -edgeOffset);
-        else                  // A / D
-            pivot = glm::vec3( animAxis.z > 0 ? -edgeOffset : edgeOffset, pivotY, 0.0f);
-       
+        if (animAxis.x != 0)
+            pivot = glm::vec3(0.0f, pivotY,
+                animAxis.x > 0 ? edgeOffset : -edgeOffset);
+        else
+            pivot = glm::vec3(
+                animAxis.z > 0 ? -edgeOffset : edgeOffset,
+                pivotY, 0.0f);
 
         blockModel =
             blockModel *
@@ -700,14 +809,33 @@ void RenderFunction(void)
 
     blockModel *= glm::scale(glm::mat4(1.0f), scale);
 
-    // ===== draw =====
+
+
+    // ===== BLOC =====
+    glUseProgram(ProgramId);
+    glBindVertexArray(VaoId);
+
+    glUniform1i(codColLocation, 0);
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
     glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    // ===== UMBRA BLOC =====
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    glUniform1i(codColLocation, 1);
+    glUniformMatrix4fv(
+        glGetUniformLocation(ProgramId, "shadowMatrix"),
+        1, GL_FALSE, glm::value_ptr(shadowMatrix)
+    );
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    glDisable(GL_POLYGON_OFFSET_FILL);
 
 
     glFlush();
 }
-
 
 // ================= MAIN =================
 

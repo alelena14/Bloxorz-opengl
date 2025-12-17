@@ -1488,9 +1488,18 @@
     <None Include="bg.vert">
       <Filter>Resource Files\shaders\example</Filter>
     </None>
+    <None Include="platform.frag">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
+    <None Include="platform.vert">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="textures\bg.jpg">
+      <Filter>Resource Files\textures</Filter>
+    </Image>
+    <Image Include="textures\platform.png">
       <Filter>Resource Files\textures</Filter>
     </Image>
   </ItemGroup>
