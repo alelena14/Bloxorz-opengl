@@ -10,8 +10,33 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
 
-GLuint VaoId, VboId, ColorBufferId, ProgramId;
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
+
+GLuint VaoId, VboId, ColorBufferId, ProgramId;
+GLuint bgVao, bgVbo;
+GLuint bgTexture;
+GLuint bgProgramId;
+GLuint NormalBufferId;
+
+glm::vec3 lightPos(8.0f, 6.0f, 8.0f);
+
+// ================= BACKGROUND QUAD =================
+float bgVertices[] = {
+    // pos     // tex
+    -1, -1,    0, 0,
+     1, -1,    1, 0,
+     1,  1,    1, 1,
+
+     1,  1,    1, 1,
+    -1,  1,    0, 1,
+    -1, -1,    0, 0
+};
+
+float camYaw = glm::radians(120.0f);   // stanga-dreapta
+float camPitch = glm::radians(35.0f); // sus-jos
+float camDist = 12.0f;
 // ================= PLATFORM LAYOUT =================
 
 const int ROWS = 6;
@@ -43,8 +68,6 @@ BlockState renderState;
 glm::vec3 startPos;
 glm::vec3 endPos;
 
-int blockRow = 0;
-int blockCol = 0;
 
 // ============== ANIMATION ==============
 bool isAnimating = false;
@@ -67,14 +90,13 @@ float alpha = PI / 6.0f;
 float beta = PI / 4.0f;
 float dist = 15.0f;    
 // pozitia blocului pe grid
-int blockI = 0;
-int blockJ = 0;
+int blockI = 1;
+int blockJ = 1;
 
 float Obsx, Obsy, Obsz;
 float Vx = 0, Vy = 0, Vz = 1;
 
 glm::mat4 view, projection, myMatrix;
-
 
 bool isInside(int i, int j) {
     return i >= 0 && i < ROWS && j >= 0 && j < COLS;
@@ -153,8 +175,6 @@ void startMoveUp() {
     isAnimating = true;
 }
 
-
-
 void startMoveDown() {
     if (isAnimating) return;
     animAxis = glm::vec3(1, 0, 0);
@@ -198,8 +218,6 @@ void startMoveDown() {
     renderState = blockState;
     isAnimating = true;
 }
-
-
 
 void startMoveLeft() {
     if (isAnimating) return;
@@ -246,8 +264,6 @@ void startMoveLeft() {
     isAnimating = true;
 }
 
-
-
 void startMoveRight() {
     if (isAnimating) return;
     animAxis = glm::vec3(0, 0, -1);
@@ -292,7 +308,6 @@ void startMoveRight() {
     isAnimating = true;
 }
 
-
 void animationTimer(int value) {
     if (isAnimating) {
         animAngle += animSpeed;
@@ -314,7 +329,6 @@ void animationTimer(int value) {
     glutTimerFunc(16, animationTimer, 0);
 }
 
-
 void processNormalKeys(unsigned char key, int x, int y)
 {
     if (key == 27) exit(0);
@@ -331,6 +345,74 @@ void processNormalKeys(unsigned char key, int x, int y)
     glutPostRedisplay();
 }
 
+
+GLuint loadTexture(const char* filename)
+{
+    int width, height, channels;
+
+    stbi_set_flip_vertically_on_load(true);
+
+    unsigned char* data =
+        stbi_load(filename, &width, &height, &channels, 0);
+
+    if (!data)
+    {
+        printf("Failed to load texture: %s\n", filename);
+        return 0;
+    }
+
+    GLenum format = GL_RGB;
+    if (channels == 1) format = GL_RED;
+    else if (channels == 3) format = GL_RGB;
+    else if (channels == 4) format = GL_RGBA;
+
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        format,
+        width,
+        height,
+        0,
+        format,
+        GL_UNSIGNED_BYTE,
+        data
+    );
+
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+        GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    stbi_image_free(data);
+    return texture;
+}
+
+void CreateBackgroundQuad()
+{
+    glGenVertexArrays(1, &bgVao);
+    glGenBuffers(1, &bgVbo);
+
+    glBindVertexArray(bgVao);
+    glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices),
+        bgVertices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
+        4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+        4 * sizeof(float),
+        (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+}
 
 
 // ================= CUBOID =================
@@ -362,6 +444,21 @@ GLfloat cubeVertices[] =
          -0.5f, 0.5f, 0.5f, 1, -0.5f, 0.5f,-0.5f, 1, -0.5f,-0.5f,-0.5f, 1
 };
 
+GLfloat cubeNormals[] =
+{
+    // TOP
+    0,1,0,  0,1,0,  0,1,0,  0,1,0,  0,1,0,  0,1,0,
+    // BOTTOM
+    0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,
+    // FRONT
+    0,0,1,  0,0,1,  0,0,1,  0,0,1,  0,0,1,  0,0,1,
+    // BACK
+    0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+    // RIGHT
+    1,0,0,  1,0,0,  1,0,0,  1,0,0,  1,0,0,  1,0,0,
+    // LEFT
+   -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0
+};
 
 
 GLfloat cubeColors[36 * 4];
@@ -372,27 +469,47 @@ void CreateVBO(void)
 {
     for (int i = 0; i < 36; i++)
     {
-        cubeColors[i * 4 + 0] = 0.45f; // R
-        cubeColors[i * 4 + 1] = 0.25f; // G
-        cubeColors[i * 4 + 2] = 0.10f; // B
-
+        cubeColors[i * 4 + 0] = 0.45f;
+        cubeColors[i * 4 + 1] = 0.25f;
+        cubeColors[i * 4 + 2] = 0.10f;
         cubeColors[i * 4 + 3] = 1.0f;
     }
 
     glGenVertexArrays(1, &VaoId);
     glBindVertexArray(VaoId);
 
+    // ===== POZITII =====
     glGenBuffers(1, &VboId);
     glBindBuffer(GL_ARRAY_BUFFER, VboId);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER,
+        sizeof(cubeVertices),
+        cubeVertices,
+        GL_STATIC_DRAW);
+
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
+    // ===== CULORI =====
     glGenBuffers(1, &ColorBufferId);
     glBindBuffer(GL_ARRAY_BUFFER, ColorBufferId);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeColors), cubeColors, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER,
+        sizeof(cubeColors),
+        cubeColors,
+        GL_STATIC_DRAW);
+
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, 0);
+
+    // ===== NORMALE =====
+    glGenBuffers(1, &NormalBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, NormalBufferId);
+    glBufferData(GL_ARRAY_BUFFER,
+        sizeof(cubeNormals),
+        cubeNormals,
+        GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);
 }
 
 void DestroyVBO(void)
@@ -416,6 +533,13 @@ void Initialize(void)
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     CreateVBO();
     CreateShaders();
+    bgProgramId = LoadShaders("bg.vert", "bg.frag");
+    CreateBackgroundQuad();
+    bgTexture = loadTexture("textures/bg.jpg");
+    glUseProgram(bgProgramId);
+    glUniform1i(glGetUniformLocation(bgProgramId, "bgTexture"), 0);
+
+
 }
 
 // ================= RENDER =================
@@ -423,18 +547,44 @@ void Initialize(void)
 void RenderFunction(void)
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(bgProgramId);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, bgTexture);
+
+    glBindVertexArray(bgVao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glEnable(GL_DEPTH_TEST);
+    glUseProgram(ProgramId);
+
     glBindVertexArray(VaoId);
 
     // ===== CAMERA =====
-    Obsx = 8.0f;
-    Obsy = 8.0f;
-    Obsz = 8.0f;
+
+    float cx = camDist * cos(camPitch) * cos(camYaw);
+    float cy = camDist * sin(camPitch);
+    float cz = camDist * cos(camPitch) * sin(camYaw);
 
     view = glm::lookAt(
-        glm::vec3(Obsx, Obsy, Obsz),
-        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(cx, cy, cz),
+        glm::vec3(-2.0f, 2.0f, 0.0f), // centrul platformei
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
+    glUseProgram(ProgramId);
+
+    glUniform3fv(glGetUniformLocation(ProgramId, "lightPos"), 1,
+        glm::value_ptr(lightPos));
+
+    glUniform3fv(glGetUniformLocation(ProgramId, "viewPos"), 1,
+        glm::value_ptr(glm::vec3(Obsx, Obsy, Obsz)));
+
+    glUniform3f(glGetUniformLocation(ProgramId, "lightColor"),
+        1.0f, 1.0f, 1.0f);
+
+
 
     projection = glm::infinitePerspective(
         glm::radians(45.0f),
