@@ -29,9 +29,15 @@ GLuint platformProgram;
 GLuint skyboxTexture;
 GLuint skyboxProgram;
 GLuint skyboxVAO, skyboxVBO;
+GLuint depthMapFBO;
+GLuint depthMap;
+GLuint shadowProgram;
 
-// matrice umbra
-glm::mat4 shadowMatrix;
+const unsigned int SHADOW_WIDTH = 2048;
+const unsigned int SHADOW_HEIGHT = 2048;
+
+glm::mat4 lightProjection, lightView, lightSpaceMatrix;
+
 glm::vec3 lightPos(-25.0f, 70.0f, 5.0f);
 
 int moveCount = 0;
@@ -164,11 +170,44 @@ glm::vec3 cameraPos;        // pozitia reala a camerei
 glm::vec3 cameraTarget;     // ce urmareste camera
 glm::vec3 cameraDesiredPos; // pozitia dorita
 
-float camYaw = glm::radians(120.0f);   // stanga-dreapta
-float camPitch = glm::radians(35.0f); // sus-jos
-float camDist = 12.0f;
+float camYaw = glm::radians(60.0f);   // stanga-dreapta
+float camPitch = glm::radians(60.0f); // sus-jos
+float camDist = 15.0f;
 
 float cameraSmooth = 0.05f;
+
+
+// ================= SHADOW MAP =================
+void InitShadowMap()
+{
+    glGenFramebuffers(1, &depthMapFBO);
+
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+        SHADOW_WIDTH, SHADOW_HEIGHT, 0,
+        GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+
+    float borderColor[] = { 1,1,1,1 };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+        GL_TEXTURE_2D, depthMap, 0
+    );
+
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
 
 
 // construire matrice umbra
@@ -792,6 +831,9 @@ void Initialize(void)
     CreateVBO();
     CreateShaders();
 
+    shadowProgram = LoadShaders("shadow.vert", "shadow.frag");
+    InitShadowMap();
+
     glGenVertexArrays(1, &skyboxVAO);
     glGenBuffers(1, &skyboxVBO);
 
@@ -805,12 +847,12 @@ void Initialize(void)
     glBindVertexArray(0);
 
     std::vector<std::string> faces = {
-    "textures/skybox/right.png",
-    "textures/skybox/left.png",
-    "textures/skybox/top.png",
-    "textures/skybox/bottom.png",
-    "textures/skybox/front.png",
-    "textures/skybox/back.png"
+    "textures/right.png",
+    "textures/left.png",
+    "textures/top.png",
+    "textures/bottom.png",
+    "textures/front.png",
+    "textures/back.png"
     };
 
     skyboxTexture = loadCubemap(faces);
@@ -841,6 +883,12 @@ void Initialize(void)
 void RenderFunction(void)
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    lightProjection = glm::ortho(-20.0f, 20.0f, -20.0f, 20.0f, 1.0f, 100.0f);
+    lightView = glm::lookAt(lightPos,
+        glm::vec3(0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f));
+    lightSpaceMatrix = lightProjection * lightView;
 
 
     // =====================================================
@@ -924,6 +972,12 @@ void RenderFunction(void)
     // =====================================================
     glUseProgram(platformProgram);
     glBindVertexArray(VaoId);
+
+    glUniformMatrix4fv(glGetUniformLocation(ProgramId, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glUniform1i(glGetUniformLocation(ProgramId, "shadowMap"), 1);
 
     GLint modelLocP = glGetUniformLocation(platformProgram, "model");
     GLint viewLocP = glGetUniformLocation(platformProgram, "view");
@@ -1020,15 +1074,6 @@ void RenderFunction(void)
     glDisable(GL_POLYGON_OFFSET_FILL);
 
 
-
-
-    // ===== calcul matrice umbra =====
-    glm::vec4 plane(0.0f, 1.0f, 0.0f, -PLATFORM_HEIGHT);
-    glm::vec4 light(lightPos, 1.0f);
-    shadowMatrix = BuildShadowMatrix(plane, light);
-
-
-
     // ===== pozitie bloc =====
     BlockState stateToDraw = (gameState == ROLLING) ? renderState : blockState;
 
@@ -1120,37 +1165,48 @@ void RenderFunction(void)
 
 
 
-   
     blockModel *= glm::scale(glm::mat4(1.0f), scale);
 
 
-    // ===== desen bloc =====
+	// ================= SHADOW MAP =================
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    glUseProgram(shadowProgram);
+    GLint modelLocShadow = glGetUniformLocation(shadowProgram, "model");
+    glUniformMatrix4fv(modelLocShadow, 1, GL_FALSE, glm::value_ptr(blockModel));
+    glUniformMatrix4fv(glGetUniformLocation(shadowProgram, "lightSpaceMatrix"),
+        1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+    glBindVertexArray(VaoId);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, 800, 600);
+
+    // ================= DESEN FINAL BLOC =================
     glUseProgram(ProgramId);
     glBindVertexArray(VaoId);
 
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glUniform1i(glGetUniformLocation(ProgramId, "shadowMap"), 0);
+
+    glUniformMatrix4fv(glGetUniformLocation(ProgramId, "model"), 1, GL_FALSE, glm::value_ptr(blockModel));
+    glUniformMatrix4fv(glGetUniformLocation(ProgramId, "view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(ProgramId, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+    glUniform3fv(glGetUniformLocation(ProgramId, "lightPos"), 1, glm::value_ptr(lightPos));
+    glUniform3fv(glGetUniformLocation(ProgramId, "viewPos"), 1, glm::value_ptr(cameraPos));
+    glUniform3f(glGetUniformLocation(ProgramId, "lightColor"), 1.0f, 1.0f, 1.0f);
+
     glUniform1i(codColLocation, 0);
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
     glDrawArrays(GL_TRIANGLES, 0, 36);
-
-    // ===== desen umbra bloc =====
-    if (gameState != FLOATING && gameState != EDGE_FALL)
-    {
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -1.0f);
-
-        glUniform1i(codColLocation, 1);
-        glUniformMatrix4fv(
-            glGetUniformLocation(ProgramId, "shadowMatrix"),
-            1, GL_FALSE, glm::value_ptr(shadowMatrix)
-        );
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-
-        glDisable(GL_POLYGON_OFFSET_FILL);
-    }
 
     // ================= GAME INFO =================
     glDisable(GL_DEPTH_TEST);
+    glUseProgram(0);
 
     // proiectie 2D
     glMatrixMode(GL_PROJECTION);
@@ -1188,7 +1244,7 @@ int main(int argc, char* argv[])
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 600);
-    glutCreateWindow("Platforma 3D - Bloxorz");
+    glutCreateWindow("Bloxorz");
     glutTimerFunc(16, animate, 0);
 
 

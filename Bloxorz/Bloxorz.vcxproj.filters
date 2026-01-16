@@ -1494,11 +1494,14 @@
     <None Include="skybox.vert">
       <Filter>Resource Files\shaders\example</Filter>
     </None>
+    <None Include="shadow.frag">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
+    <None Include="shadow.vert">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="textures\background.png">
-      <Filter>Resource Files\textures</Filter>
-    </Image>
     <Image Include="textures\platform.jpg">
       <Filter>Resource Files\textures</Filter>
     </Image>

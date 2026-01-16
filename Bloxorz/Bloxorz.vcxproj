@@ -645,11 +645,12 @@ xcopy /y /d "$(ProjectDir)lib\x64\SOIL\*.dll" "$(OutDir)" &amp;</Command>
     <None Include="lib\x64\SOIL\SOIL.dll" />
     <None Include="platform.frag" />
     <None Include="platform.vert" />
+    <None Include="shadow.frag" />
+    <None Include="shadow.vert" />
     <None Include="skybox.frag" />
     <None Include="skybox.vert" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="textures\background.png" />
     <Image Include="textures\platform.jpg" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
