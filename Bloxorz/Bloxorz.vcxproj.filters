@@ -1482,24 +1482,24 @@
     <None Include="lib\x64\GL\DLLs\glew32.dll">
       <Filter>Resource Files\template-built-ins\DLLs\64b</Filter>
     </None>
-    <None Include="bg.frag">
-      <Filter>Resource Files\shaders\example</Filter>
-    </None>
-    <None Include="bg.vert">
-      <Filter>Resource Files\shaders\example</Filter>
-    </None>
     <None Include="platform.frag">
       <Filter>Resource Files\shaders\example</Filter>
     </None>
     <None Include="platform.vert">
       <Filter>Resource Files\shaders\example</Filter>
     </None>
+    <None Include="skybox.frag">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
+    <None Include="skybox.vert">
+      <Filter>Resource Files\shaders\example</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="textures\bg.jpg">
+    <Image Include="textures\background.png">
       <Filter>Resource Files\textures</Filter>
     </Image>
-    <Image Include="textures\platform.png">
+    <Image Include="textures\platform.jpg">
       <Filter>Resource Files\textures</Filter>
     </Image>
   </ItemGroup>

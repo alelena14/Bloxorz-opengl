@@ -13,6 +13,13 @@ out vec4 outColor;
 
 void main()
 {
+    // ===== TARGET =====
+    if (codCol == 2)
+    {
+        outColor = vec4(1.0, 0.843, 0.0, 1.0);
+        return;
+    }
+
     // ===== UMBRA =====
     if (codCol == 1)
     {
@@ -32,3 +39,4 @@ void main()
     vec3 result = (ambient + diffuse) * lightColor;
     outColor = vec4(result, fragColor.a);
 }
+

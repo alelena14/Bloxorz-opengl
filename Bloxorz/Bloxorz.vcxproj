@@ -485,8 +485,6 @@ xcopy /y /d "$(ProjectDir)lib\x64\SOIL\*.dll" "$(OutDir)" &amp;</Command>
     <Text Include="include\glm\CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="bg.frag" />
-    <None Include="bg.vert" />
     <None Include="example.frag" />
     <None Include="example.vert" />
     <None Include="include\glm\detail\func_common.inl" />
@@ -647,10 +645,12 @@ xcopy /y /d "$(ProjectDir)lib\x64\SOIL\*.dll" "$(OutDir)" &amp;</Command>
     <None Include="lib\x64\SOIL\SOIL.dll" />
     <None Include="platform.frag" />
     <None Include="platform.vert" />
+    <None Include="skybox.frag" />
+    <None Include="skybox.vert" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="textures\bg.jpg" />
-    <Image Include="textures\platform.png" />
+    <Image Include="textures\background.png" />
+    <Image Include="textures\platform.jpg" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

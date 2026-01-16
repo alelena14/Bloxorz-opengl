@@ -1,5 +1,3 @@
-// Cod sursa adaptat dupa OpenGLBook.com
-
 #include <windows.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -9,6 +7,11 @@
 #include "glm/glm.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <vector>
+#include <string>
+
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -23,45 +26,102 @@ GLuint codColLocation;
 GLuint TexCoordBufferId;
 GLuint platformTexture;
 GLuint platformProgram;
-
+GLuint skyboxTexture;
+GLuint skyboxProgram;
+GLuint skyboxVAO, skyboxVBO;
 
 // matrice umbra
 glm::mat4 shadowMatrix;
 glm::vec3 lightPos(-25.0f, 70.0f, 5.0f);
 
-// ================= BACKGROUND QUAD =================
-float bgVertices[] = {
-    // pos     // tex
-    -1, -1,    0, 0,
-     1, -1,    1, 0,
-     1,  1,    1, 1,
+int moveCount = 0;
 
-     1,  1,    1, 1,
-    -1,  1,    0, 1,
-    -1, -1,    0, 0
-};
-
-float camYaw = glm::radians(120.0f);   // stanga-dreapta
-float camPitch = glm::radians(35.0f); // sus-jos
-float camDist = 12.0f;
-
-// ================= PLATFORM LAYOUT =================
-const int ROWS = 6;
-const int COLS = 10;
-const float PLATFORM_HEIGHT = 0.2f;
-const float BLOCK_HALF_STANDING = 1.0f;
-const float BLOCK_HALF_LYING = 0.5f;
-
-
-int platform[ROWS][COLS] =
+enum GameState
 {
-    {1,1,1,0,0,0,0,0,0,0},
-    {1,1,1,1,1,1,0,0,0,0},
-    {1,1,1,1,1,1,1,1,1,0},
-    {0,1,1,1,1,1,1,1,1,1},
-	{0,0,0,0,0,1,1,1,1,1},
-	{0,0,0,0,0,0,1,1,1,0}
+    PLAYING,        // control normal
+    ROLLING,        // rostogolire
+    EDGE_FALL,      // cadere pe margine
+    FLOATING,       // win animation
+    RESETTING       // reset / schimbare nivel
 };
+
+GameState gameState = PLAYING;
+
+// ================= LEVEL LAYOUT =================
+
+const float PLATFORM_HEIGHT = 0.2f;
+
+// targetul final
+int goalI, goalJ;
+float targetThickness = 0.05f;
+float targetY = PLATFORM_HEIGHT + targetThickness / 2.0f + 0.008f;
+
+struct Level
+{
+    int rows;
+    int cols;
+    std::vector<std::vector<int>> map;
+
+    int startI, startJ;
+    int goalI, goalJ;
+};
+
+
+std::vector<Level> levels =
+{
+    // ================= LEVEL 1 =================
+    {
+        6, 10,
+        {
+            {1,1,1,0,0,0,0,0,0,0},
+            {1,1,1,1,1,1,0,0,0,0},
+            {1,1,1,1,1,1,1,1,1,0},
+            {0,1,1,1,1,1,1,1,1,1},
+            {0,0,0,0,0,1,1,1,1,1},
+            {0,0,0,0,0,0,1,1,1,0}
+        },
+        1, 1,
+        4, 7
+    },
+
+    // ================= LEVEL 2 =================
+    {
+        6, 5,
+        {
+            {0,1,1,1,1},
+            {1,1,1,1,0},
+            {1,1,0,1,0},
+            {1,1,1,1,1},
+            {0,0,1,1,1},
+            {0,0,1,1,1}
+        },
+        0, 4,
+        4, 3
+    },
+
+    // ================= LEVEL 3 =================
+    {
+        10, 15,
+        {
+            {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0},
+            {0,0,0,0,0,1,0,0,1,1,1,0,0,0,0},
+            {0,0,0,0,0,1,0,0,1,1,1,1,1,0,0},
+            {1,1,1,1,1,1,0,0,0,0,0,1,1,1,1},
+            {0,0,0,0,1,1,1,0,0,0,0,1,1,1,1},
+            {0,0,0,0,1,1,1,0,0,0,0,0,1,1,1},
+            {0,0,0,0,0,0,1,0,0,1,1,0,0,0,0},
+            {0,0,0,0,0,0,1,1,1,1,1,0,0,0,0},
+            {0,0,0,0,0,0,1,1,1,1,1,0,0,0,0},
+            {0,0,0,0,0,0,0,1,1,1,0,0,0,0,0}
+        },
+        3, 0,
+        4, 13
+    }
+};
+
+int currentLevel = 0;
+int LEVEL_COUNT = (int)levels.size();
+
 
 // ================= BLOCK =================
 enum BlockState {
@@ -72,38 +132,43 @@ enum BlockState {
 
 BlockState blockState = STANDING;
 BlockState renderState;
-glm::vec3 startPos;
-glm::vec3 endPos;
 
-
-// ============== ANIMATION ==============
-bool isAnimating = false;
-float animAngle = 0.0f;
-float animSpeed = 3.0f;   // grade / frame
-
-glm::vec3 animAxis;       // axa de rotatie
-
-float startY = 0.0f;
-float endY = 0.0f;
+const float BLOCK_HALF_STANDING = 1.0f;
+const float BLOCK_HALF_LYING = 0.5f;
 
 // target
-int targetI, targetJ;
+int moveTargetI, moveTargetJ;
 BlockState targetState;
 
-
-float PI = 3.141592f;
-float Refx = 0, Refy = 0, Refz = 0;
-float alpha = PI / 6.0f; 
-float beta = PI / 4.0f;
-float dist = 15.0f;    
 // pozitia blocului pe grid
 int blockI = 1;
 int blockJ = 1;
 
-float Obsx, Obsy, Obsz;
-float Vx = 0, Vy = 0, Vz = 1;
 
-glm::mat4 view, projection, myMatrix;
+// ============== ANIMATION ==============
+glm::quat startRot;
+glm::quat endRot;
+float animT = 0.0f; // roll animation
+
+bool fallAfterRoll = false;
+glm::vec3 animAxis;
+
+glm::mat4 view, projection;
+
+// pentru plutirea de final
+float floatY = 0.0f;
+float floatSpeed = 0.08f;
+
+// ============= CAMERA ===============
+glm::vec3 cameraPos;        // pozitia reala a camerei
+glm::vec3 cameraTarget;     // ce urmareste camera
+glm::vec3 cameraDesiredPos; // pozitia dorita
+
+float camYaw = glm::radians(120.0f);   // stanga-dreapta
+float camPitch = glm::radians(35.0f); // sus-jos
+float camDist = 12.0f;
+
+float cameraSmooth = 0.05f;
 
 
 // construire matrice umbra
@@ -139,243 +204,310 @@ glm::mat4 BuildShadowMatrix(glm::vec4 plane, glm::vec4 light)
     return m;
 }
 
-
-bool isInside(int i, int j) {
-    return i >= 0 && i < ROWS && j >= 0 && j < COLS;
+void startEdgeFall()
+{
+    gameState = EDGE_FALL;
 }
 
-bool isValidPosition(int i, int j, BlockState state) {
-    if (state == STANDING) {
-        return isInside(i, j) && platform[i][j];
-    }
+glm::vec3 gridToWorld(int i, int j)
+{
+    const Level& lvl = levels[currentLevel];
 
-    if (state == LYING_X) {
+    float centerX = lvl.cols * 0.5f;
+    float centerZ = lvl.rows * 0.5f;
+
+    return glm::vec3(
+        j - centerX,
+        0.0f,
+        i - centerZ
+    );
+}
+
+void resetLevel()
+{
+    moveCount = 0;
+
+    const Level& lvl = levels[currentLevel];
+
+    blockI = lvl.startI;
+    blockJ = lvl.startJ;
+
+    goalI = lvl.goalI;
+    goalJ = lvl.goalJ;
+
+    blockState = STANDING;
+    renderState = STANDING;
+
+    animT = 0.0f;
+    floatY = 0.0f;
+
+    cameraTarget = gridToWorld(blockI, blockJ);
+    cameraTarget.y = 1.0f;
+
+    gameState = PLAYING;
+}
+
+bool isOnTarget()
+{
+    return blockState == STANDING &&
+        levels[currentLevel].goalI == blockI &&
+        levels[currentLevel].goalJ == blockJ;
+}
+
+bool isInside(int i, int j)
+{
+    const Level& lvl = levels[currentLevel];
+    return i >= 0 && i < lvl.rows &&
+        j >= 0 && j < lvl.cols;
+}
+
+bool isValidPosition(int i, int j, BlockState state)
+{
+    const Level& lvl = levels[currentLevel];
+
+    if (state == STANDING)
+        return isInside(i, j) && lvl.map[i][j];
+
+    if (state == LYING_X)
         return isInside(i, j) &&
-            isInside(i, j + 1) &&
-            platform[i][j] &&
-            platform[i][j + 1];
-    }
+        isInside(i, j + 1) &&
+        lvl.map[i][j] &&
+        lvl.map[i][j + 1];
 
     // LYING_Z
     return isInside(i, j) &&
         isInside(i + 1, j) &&
-        platform[i][j] &&
-        platform[i + 1][j];
+        lvl.map[i][j] &&
+        lvl.map[i + 1][j];
 }
 
+void beginRoll()
+{
+    // rotatii
+    startRot = glm::quat(1, 0, 0, 0);
+    endRot = glm::angleAxis(
+        glm::radians(90.0f),
+        glm::normalize(animAxis)
+    );
 
-void checkGameOver() {
-    if (!isValidPosition(blockI, blockJ, blockState)) {
-        printf("GAME OVER\n");
-        blockI = 0;
-        blockJ = 0;
-        blockState = STANDING;
-    }
+    renderState = blockState;
+    moveCount++;
+    animT = 0.0f;
+    gameState = ROLLING;
 }
 
 void startMoveUp() {
-    if (isAnimating) return;
+    if (gameState != PLAYING) return;
     animAxis = glm::vec3(-1, 0, 0);
 
     if (blockState == STANDING) {
-        if (!isValidPosition(blockI - 2, blockJ, LYING_Z)) return;
-
-        targetI = blockI - 2;
-        targetJ = blockJ;
+        moveTargetI = blockI - 2;
+        moveTargetJ = blockJ;
         targetState = LYING_Z;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_Z) {
         // ridicare
-        if (!isValidPosition(blockI - 1, blockJ, STANDING)) return;
-
-        targetI = blockI - 1;
-        targetJ = blockJ;
+        moveTargetI = blockI - 1;
+        moveTargetJ = blockJ;
         targetState = STANDING;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
+
     else if (blockState == LYING_X) {
         // mutare culcat
-        if (!isValidPosition(blockI - 1, blockJ, LYING_X)) return;
-
-        targetI = blockI - 1;
-        targetJ = blockJ;
+        moveTargetI = blockI - 1;
+        moveTargetJ = blockJ;
         targetState = LYING_X;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else return;
 
-    // pozitia de start
-    startPos = glm::vec3(blockJ - 5.0f, 0.0f, blockI - 5.0f);
-    if (blockState == LYING_X) startPos.x += 0.5f;
-    if (blockState == LYING_Z) startPos.z += 0.5f;
+    beginRoll();
 
-    // pozitia de final
-    endPos = glm::vec3(targetJ - 5.0f, 0.0f, targetI - 5.0f);
-    if (targetState == LYING_X) endPos.x += 0.5f;
-    if (targetState == LYING_Z) endPos.z += 0.5f;
-
-    animAngle = 0.0f;
-    renderState = blockState;
-    isAnimating = true;
 }
 
 void startMoveDown() {
-    if (isAnimating) return;
+    if (gameState != PLAYING) return;
     animAxis = glm::vec3(1, 0, 0);
 
     if (blockState == STANDING) {
-        if (!isValidPosition(blockI + 1, blockJ, LYING_Z)) return;
-
-        targetI = blockI + 1;
-        targetJ = blockJ;
+        moveTargetI = blockI + 1;
+        moveTargetJ = blockJ;
         targetState = LYING_Z;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_Z) {
         // ridicare
-        if (!isValidPosition(blockI + 2, blockJ, STANDING)) return;
-
-        targetI = blockI + 2;
-        targetJ = blockJ;
+        moveTargetI = blockI + 2;
+        moveTargetJ = blockJ;
         targetState = STANDING;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_X) {
         // mutare culcat
-        if (!isValidPosition(blockI + 1, blockJ, LYING_X)) return;
-
-        targetI = blockI + 1;
-        targetJ = blockJ;
+        moveTargetI = blockI + 1;
+        moveTargetJ = blockJ;
         targetState = LYING_X;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else return;
 
-    // pozitia de start
-    startPos = glm::vec3(blockJ - 5.0f, 0.0f, blockI - 5.0f);
-    if (blockState == LYING_X) startPos.x += 0.5f;
-    if (blockState == LYING_Z) startPos.z += 0.5f;
+    beginRoll();
 
-    // pozitia de final
-    endPos = glm::vec3(targetJ - 5.0f, 0.0f, targetI - 5.0f);
-    if (targetState == LYING_X) endPos.x += 0.5f;
-    if (targetState == LYING_Z) endPos.z += 0.5f;
-
-    animAngle = 0.0f;
-    renderState = blockState;
-    isAnimating = true;
 }
 
 void startMoveLeft() {
-    if (isAnimating) return;
+    if (gameState != PLAYING) return;
     animAxis = glm::vec3(0, 0, 1);
 
     if (blockState == STANDING) {
-        if (!isValidPosition(blockI, blockJ - 2, LYING_X)) return;
-
-        targetI = blockI;
-        targetJ = blockJ - 2;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ - 2;
         targetState = LYING_X;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_X) {
         // ridicare
-        if (!isValidPosition(blockI, blockJ - 1, STANDING)) return;
-
-        targetI = blockI;
-        targetJ = blockJ - 1;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ - 1;
         targetState = STANDING;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_Z) {
         // mutare culcat
-        if (!isValidPosition(blockI, blockJ - 1, LYING_Z)) return;
-
-        targetI = blockI;
-        targetJ = blockJ - 1;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ - 1;
         targetState = LYING_Z;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else return;
 
-    // pozitia de start
-    startPos = glm::vec3(blockJ - 5.0f, 0.0f, blockI - 5.0f);
-    if (blockState == LYING_X) startPos.x += 0.5f;
-    if (blockState == LYING_Z) startPos.z += 0.5f;
+    beginRoll();
 
-    // pozitia de final
-    endPos = glm::vec3(targetJ - 5.0f, 0.0f, targetI - 5.0f);
-    if (targetState == LYING_X) endPos.x += 0.5f;
-    if (targetState == LYING_Z) endPos.z += 0.5f;
-
-
-    animAngle = 0.0f;
-    renderState = blockState;
-    isAnimating = true;
 }
 
 void startMoveRight() {
-    if (isAnimating) return;
+    if (gameState != PLAYING) return;
     animAxis = glm::vec3(0, 0, -1);
 
     if (blockState == STANDING) {
-        if (!isValidPosition(blockI, blockJ + 1, LYING_X)) return;
-
-        targetI = blockI;
-        targetJ = blockJ + 1;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ + 1;
         targetState = LYING_X;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_X) {
         // ridicare
-        if (!isValidPosition(blockI, blockJ + 2, STANDING)) return;
-
-        targetI = blockI;
-        targetJ = blockJ + 2;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ + 2;
         targetState = STANDING;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else if (blockState == LYING_Z) {
         // mutare culcat
-        if (!isValidPosition(blockI, blockJ + 1, LYING_Z)) return;
-
-        targetI = blockI;
-        targetJ = blockJ + 1;
+        moveTargetI = blockI;
+        moveTargetJ = blockJ + 1;
         targetState = LYING_Z;
+
+        if (!isValidPosition(moveTargetI, moveTargetJ, targetState))
+            fallAfterRoll = true;
     }
     else return;
 
-    // pozitia de start
-    startPos = glm::vec3(blockJ - 5.0f, 0.0f, blockI - 5.0f);
-    if (blockState == LYING_X) startPos.x += 0.5f;
-    if (blockState == LYING_Z) startPos.z += 0.5f;
+    beginRoll();
 
-    // pozitia de final
-    endPos = glm::vec3(targetJ - 5.0f, 0.0f, targetI - 5.0f);
-    if (targetState == LYING_X) endPos.x += 0.5f;
-    if (targetState == LYING_Z) endPos.z += 0.5f;
-
-    animAngle = 0.0f;
-    renderState = blockState;
-    isAnimating = true;
 }
 
-void animationTimer(int value) {
-    if (isAnimating) {
-        animAngle += animSpeed;
+void animate(int)
+{
+    switch (gameState)
+    {
+    case ROLLING:
+        animT += 0.05f;
 
-        if (animAngle >= 90.0f) {
-            animAngle = 90.0f;
-            isAnimating = false;
+        if (animT >= 1.0f)
+        {
+            animT = 1.0f;
 
-            blockI = targetI;
-            blockJ = targetJ;
+            blockI = moveTargetI;
+            blockJ = moveTargetJ;
             blockState = targetState;
-            renderState = blockState;
 
-			checkGameOver();
+            if (fallAfterRoll)
+            {
+                startEdgeFall(); 
+                fallAfterRoll = false;
+            }
+            else if (isOnTarget())
+            {
+                gameState = FLOATING;
+            }
+            else
+            {
+                gameState = PLAYING;
+            }
         }
+        break;
+
+
+    case EDGE_FALL:
+        floatY -= floatSpeed;
+
+        if (floatY < -6.0f)
+            gameState = RESETTING;
+        break;
+
+
+    case FLOATING:
+        floatY += floatSpeed;
+        if (floatY > 6.0f)
+        {
+            currentLevel++;
+            if (currentLevel >= LEVEL_COUNT)
+                currentLevel = 0; // reincepe jocul
+            gameState = RESETTING;
+        }
+        break;
+
+
+    case RESETTING:
+        resetLevel();
+        break;
+
+    default:
+        break;
     }
 
     glutPostRedisplay();
-    glutTimerFunc(10, animationTimer, 0);
+    glutTimerFunc(10, animate, 0);
 }
 
 void processNormalKeys(unsigned char key, int x, int y)
 {
-    if (key == 27) exit(0);
-
-    if (isAnimating) return;
+    if (gameState != PLAYING) return;
 
     switch (key) {
     case 'w': startMoveUp();    break;
@@ -386,7 +518,6 @@ void processNormalKeys(unsigned char key, int x, int y)
 
     glutPostRedisplay();
 }
-
 
 GLuint loadTexture(const char* filename)
 {
@@ -436,26 +567,34 @@ GLuint loadTexture(const char* filename)
     return texture;
 }
 
-void CreateBackgroundQuad()
+void drawText(float x, float y, const char* text)
 {
-    glGenVertexArrays(1, &bgVao);
-    glGenBuffers(1, &bgVbo);
-
-    glBindVertexArray(bgVao);
-    glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices),
-        bgVertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-        4 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
-        4 * sizeof(float),
-        (void*)(2 * sizeof(float)));
-    glEnableVertexAttribArray(1);
+    glRasterPos2f(x, y);
+    for (const char* c = text; *c != '\0'; c++)
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
 }
 
+// ================= SKYBOX =================
+
+float skyboxVertices[] = {
+    -1, 1, -1, -1, -1, -1, 1, -1, -1,
+    1, -1, -1, 1, 1, -1, -1, 1, -1,
+
+    -1, -1, 1, -1, -1, -1, -1, 1, -1,
+    -1, 1, -1, -1, 1, 1, -1, -1, 1,
+
+    1, -1, -1, 1, -1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, -1, 1, -1, -1,
+
+    -1, -1, 1, -1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, -1, 1, -1, -1, 1,
+
+    -1, 1, -1, 1, 1, -1, 1, 1, 1,
+    1, 1, 1, -1, 1, 1, -1, 1, -1,
+
+    -1, -1, -1, -1, -1, 1, 1, -1, -1,
+    1, -1, -1, -1, -1, 1, 1, -1, 1
+};
 
 // ================= CUBOID =================
 
@@ -526,9 +665,9 @@ void CreateVBO(void)
 {
     for (int i = 0; i < 36; i++)
     {
-        cubeColors[i * 4 + 0] = 0.45f;
-        cubeColors[i * 4 + 1] = 0.25f;
-        cubeColors[i * 4 + 2] = 0.10f;
+        cubeColors[i * 4 + 0] = 1.0f;
+        cubeColors[i * 4 + 1] = 0.0f;
+        cubeColors[i * 4 + 2] = 0.4f;
         cubeColors[i * 4 + 3] = 1.0f;
     }
 
@@ -596,22 +735,99 @@ void CreateShaders(void)
     glUseProgram(ProgramId);
 }
 
+GLuint loadCubemap(std::vector<std::string> faces)
+{
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+
+    int width, height, channels;
+    stbi_set_flip_vertically_on_load(false);
+
+    for (unsigned int i = 0; i < faces.size(); i++)
+    {
+        unsigned char* data = stbi_load(
+            faces[i].c_str(),
+            &width, &height, &channels, 0
+        );
+
+        if (data)
+        {
+            GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
+
+            glTexImage2D(
+                GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+                0,
+                format,
+                width,
+                height,
+                0,
+                format,
+                GL_UNSIGNED_BYTE,
+                data
+            );
+        }
+        else
+        {
+            printf("Failed to load skybox texture: %s\n", faces[i].c_str());
+        }
+
+        stbi_image_free(data);
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+    return textureID;
+}
+
+
 void Initialize(void)
 {
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     CreateVBO();
     CreateShaders();
-    codColLocation = glGetUniformLocation(ProgramId, "codCol");
 
-    bgProgramId = LoadShaders("bg.vert", "bg.frag");
-    CreateBackgroundQuad();
-    bgTexture = loadTexture("textures/bg.jpg");
-    glUseProgram(bgProgramId);
-    glUniform1i(glGetUniformLocation(bgProgramId, "bgTexture"), 0);
+    glGenVertexArrays(1, &skyboxVAO);
+    glGenBuffers(1, &skyboxVBO);
+
+    glBindVertexArray(skyboxVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+
+    std::vector<std::string> faces = {
+    "textures/skybox/right.png",
+    "textures/skybox/left.png",
+    "textures/skybox/top.png",
+    "textures/skybox/bottom.png",
+    "textures/skybox/front.png",
+    "textures/skybox/back.png"
+    };
+
+    skyboxTexture = loadCubemap(faces);
+
+    skyboxProgram = LoadShaders("skybox.vert", "skybox.frag");
+
+    glUseProgram(skyboxProgram);
+    glUniform1i(glGetUniformLocation(skyboxProgram, "skybox"), 0);
+
+
+    codColLocation = glGetUniformLocation(ProgramId, "codCol");
+    cameraPos = glm::vec3(0.0f, 10.0f, 15.0f);
+    cameraTarget = glm::vec3(-2.0f, 2.0f, 0.0f);
+
 
     platformProgram = LoadShaders("platform.vert", "platform.frag");
-    platformTexture = loadTexture("textures/platform.png");
+    platformTexture = loadTexture("textures/platform.jpg");
     glUseProgram(platformProgram);
     glUniform1i(glGetUniformLocation(platformProgram, "platformTexture"), 0);
 
@@ -626,34 +842,72 @@ void RenderFunction(void)
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // =====================================================
-    // 1. BACKGROUND
-    // =====================================================
-    glDisable(GL_DEPTH_TEST);
-    glUseProgram(bgProgramId);
 
+    // =====================================================
+    // 1. BACKGROUND SKYBOX
+    // =====================================================
+
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skyboxProgram);
+
+    glm::mat4 viewNoTranslate = glm::mat4(glm::mat3(view));
+    glUniformMatrix4fv(
+        glGetUniformLocation(skyboxProgram, "view"),
+        1, GL_FALSE, glm::value_ptr(viewNoTranslate)
+    );
+
+    glUniformMatrix4fv(
+        glGetUniformLocation(skyboxProgram, "projection"),
+        1, GL_FALSE, glm::value_ptr(projection)
+    );
+
+    glBindVertexArray(skyboxVAO);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, bgTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
 
-    glBindVertexArray(bgVao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    glEnable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
 
 
 
     // =====================================================
-    // 2. CAMERA (o calculăm O SINGURĂ DATĂ)
+    // 2. CAMERA
     // =====================================================
-    float cx = camDist * cos(camPitch) * cos(camYaw);
-    float cy = camDist * sin(camPitch);
-    float cz = camDist * cos(camPitch) * sin(camYaw);
 
-    glm::vec3 cameraPos(cx, cy, cz);
+    glm::vec3 blockWorldPos = gridToWorld(blockI, blockJ);
+    blockWorldPos.y = 1.0f;
+
+    cameraTarget = glm::mix(cameraTarget, blockWorldPos, cameraSmooth);
+
+    float desiredDist = camDist;
+    float desiredHeight = 8.0f;
+
+    // reactie la stari
+    if (gameState == FLOATING)
+    {
+        desiredDist = 10.0f;
+        desiredHeight = 6.0f;
+    }
+    else if (gameState == EDGE_FALL)
+    {
+        desiredDist = 14.0f;
+        desiredHeight = 10.0f;
+    }
+
+    cameraDesiredPos = blockWorldPos +
+        glm::vec3(
+            desiredDist * cos(camYaw),
+            desiredHeight,
+            desiredDist * sin(camYaw)
+        );
+
+    // interpolare
+    cameraPos = glm::mix(cameraPos, cameraDesiredPos, cameraSmooth);
 
     view = glm::lookAt(
         cameraPos,
-        glm::vec3(-2.0f, 2.0f, 0.0f),   // centrul platformei
+        cameraTarget,
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
 
@@ -666,7 +920,7 @@ void RenderFunction(void)
 
 
     // =====================================================
-    // 3. PLATFORMA (SHADER SEPARAT)
+    // 3. PLATFORMA
     // =====================================================
     glUseProgram(platformProgram);
     glBindVertexArray(VaoId);
@@ -696,27 +950,28 @@ void RenderFunction(void)
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, platformTexture);
 
-    for (int i = 0; i < ROWS; i++)
-        for (int j = 0; j < COLS; j++)
-            if (platform[i][j])
+    const Level& lvl = levels[currentLevel];
+
+    for (int i = 0; i < lvl.rows; i++)
+        for (int j = 0; j < lvl.cols; j++)
+            if (lvl.map[i][j])
             {
                 glm::mat4 model =
                     glm::translate(glm::mat4(1.0f),
-                        glm::vec3(j - 5.0f, 0.1f, i - 5.0f)) *
+                        glm::vec3(j - lvl.cols / 2.0f, 0.1f,
+                            i - lvl.rows / 2.0f)) *
                     glm::scale(glm::mat4(1.0f),
                         glm::vec3(1.0f, 0.2f, 1.0f));
 
-                glUniformMatrix4fv(
-                    modelLocP, 1, GL_FALSE, glm::value_ptr(model)
-                );
-
+                glUniformMatrix4fv(modelLocP, 1, GL_FALSE, glm::value_ptr(model));
                 glDrawArrays(GL_TRIANGLES, 0, 36);
             }
 
 
 
+
     // =====================================================
-    // 4. BLOC + UMBRĂ (SHADER VECHI)
+    // 4. BLOC + UMBRA
     // =====================================================
     glUseProgram(ProgramId);
     glBindVertexArray(VaoId);
@@ -743,24 +998,47 @@ void RenderFunction(void)
         1.0f, 1.0f, 1.0f
     );
 
+    // ================= TARGET =================
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    glm::vec3 t = gridToWorld(goalI, goalJ);
+    t.y = targetY;
+
+    glm::mat4 targetModel =
+        glm::translate(glm::mat4(1.0f), t) *
+        glm::scale(glm::mat4(1.0f),
+            glm::vec3(1.0f, 0.05f, 1.0f));
 
 
-    // ===== calcul matrice umbră =====
+    glUniform1i(codColLocation, 2); // TARGET COLOR
+    glUniformMatrix4fv(
+        modelLoc, 1, GL_FALSE, glm::value_ptr(targetModel)
+    );
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    glDisable(GL_POLYGON_OFFSET_FILL);
+
+
+
+
+    // ===== calcul matrice umbra =====
     glm::vec4 plane(0.0f, 1.0f, 0.0f, -PLATFORM_HEIGHT);
     glm::vec4 light(lightPos, 1.0f);
     shadowMatrix = BuildShadowMatrix(plane, light);
 
 
 
-    // ===== poziție bloc =====
-    BlockState stateToDraw = isAnimating ? renderState : blockState;
+    // ===== pozitie bloc =====
+    BlockState stateToDraw = (gameState == ROLLING) ? renderState : blockState;
 
     float blockY =
         (stateToDraw == STANDING)
         ? PLATFORM_HEIGHT + BLOCK_HALF_STANDING
         : PLATFORM_HEIGHT + BLOCK_HALF_LYING;
 
-    glm::vec3 pos(blockJ - 5.0f, blockY, blockI - 5.0f);
+    glm::vec3 pos = gridToWorld(blockI, blockJ);
+    pos.y = blockY;
 
     if (stateToDraw == LYING_X) pos.x += 0.5f;
     if (stateToDraw == LYING_Z) pos.z += 0.5f;
@@ -776,9 +1054,8 @@ void RenderFunction(void)
     glm::mat4 blockModel = glm::translate(glm::mat4(1.0f), pos);
 
 
-
-    // ===== animație =====
-    if (isAnimating)
+    // ====== animatie rostogolire ======
+    if (gameState == ROLLING)
     {
         float pivotY =
             (renderState == STANDING)
@@ -798,20 +1075,56 @@ void RenderFunction(void)
                 animAxis.z > 0 ? -edgeOffset : edgeOffset,
                 pivotY, 0.0f);
 
+        glm::quat q = glm::slerp(startRot, endRot, animT);
+
         blockModel =
             blockModel *
             glm::translate(glm::mat4(1.0f), pivot) *
-            glm::rotate(glm::mat4(1.0f),
-                glm::radians(animAngle),
-                animAxis) *
+            glm::toMat4(q) *
             glm::translate(glm::mat4(1.0f), -pivot);
     }
 
+    // ===== plutire =====
+    if (gameState == FLOATING)
+    {
+
+        blockModel =
+            blockModel *
+            glm::translate(glm::mat4(1.0f),
+                glm::vec3(0.0f, floatY, 0.0f)) *
+            glm::rotate(glm::mat4(1.0f),
+                floatY,
+                glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
+
+	// ===== cadere de pe platforma =====
+    if (gameState == EDGE_FALL)
+    {
+        // directia ultimei mutari
+        glm::vec3 rotAxis = glm::normalize(animAxis);
+
+        // cade vertical
+        blockModel =
+            blockModel *
+            glm::translate(glm::mat4(1.0f),
+                glm::vec3(0.0f, floatY, 0.0f));
+
+        // se roteste PE LOC
+        blockModel =
+            blockModel *
+            glm::rotate(glm::mat4(1.0f),
+                floatY,
+                -rotAxis);
+    }
+
+
+
+   
     blockModel *= glm::scale(glm::mat4(1.0f), scale);
 
 
-
-    // ===== BLOC =====
+    // ===== desen bloc =====
     glUseProgram(ProgramId);
     glBindVertexArray(VaoId);
 
@@ -819,20 +1132,51 @@ void RenderFunction(void)
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
     glDrawArrays(GL_TRIANGLES, 0, 36);
 
-    // ===== UMBRA BLOC =====
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
+    // ===== desen umbra bloc =====
+    if (gameState != FLOATING && gameState != EDGE_FALL)
+    {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -1.0f);
 
-    glUniform1i(codColLocation, 1);
-    glUniformMatrix4fv(
-        glGetUniformLocation(ProgramId, "shadowMatrix"),
-        1, GL_FALSE, glm::value_ptr(shadowMatrix)
-    );
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
-    glDrawArrays(GL_TRIANGLES, 0, 36);
+        glUniform1i(codColLocation, 1);
+        glUniformMatrix4fv(
+            glGetUniformLocation(ProgramId, "shadowMatrix"),
+            1, GL_FALSE, glm::value_ptr(shadowMatrix)
+        );
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(blockModel));
+        glDrawArrays(GL_TRIANGLES, 0, 36);
 
-    glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
 
+    // ================= GAME INFO =================
+    glDisable(GL_DEPTH_TEST);
+
+    // proiectie 2D
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    gluOrtho2D(0, 800, 0, 600);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // culoare text
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    // text dreapta sus
+    char buffer[64];
+    sprintf_s(buffer, "Level: %d  Moves: %d", currentLevel + 1, moveCount);
+    drawText(620, 560, buffer);
+
+    // restore
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+
+    glEnable(GL_DEPTH_TEST);
 
     glFlush();
 }
@@ -845,12 +1189,13 @@ int main(int argc, char* argv[])
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 600);
     glutCreateWindow("Platforma 3D - Bloxorz");
-    glutTimerFunc(16, animationTimer, 0);
+    glutTimerFunc(16, animate, 0);
 
 
     glewInit();
 
     Initialize();
+	resetLevel();
 
     glutDisplayFunc(RenderFunction);
     glutKeyboardFunc(processNormalKeys);
