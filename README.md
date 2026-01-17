@@ -7,7 +7,10 @@ O reinterpretare modernă a jocului clasic de puzzle **Bloxorz**, dezvoltată ca
 
 ---
 
-## 🚀 Demo
+## 🎮 Demo
+<p align="center">
+  <img src="Bloxorz.gif" width="700" alt="Gameplay Showcase">
+</p>
 
 ---
 
